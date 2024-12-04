@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 
 // Generator генерирует последовательность чисел 1,2,3 и т.д. и
@@ -12,14 +13,40 @@ import (
 // вызывается функция fn. Она служит для подсчёта количества и суммы
 // сгенерированных чисел.
 func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
-	// 1. Функция Generator
-	// ...
+	defer close(ch)
+
+	var number int64 = 1
+
+	for {
+		select {
+		case ch <- number:
+		case <-ctx.Done():
+			return
+		}
+
+		fn(number)
+
+		number++
+	}
 }
 
 // Worker читает число из канала in и пишет его в канал out.
 func Worker(in <-chan int64, out chan<- int64) {
-	// 2. Функция Worker
-	// ...
+	defer close(out)
+
+	for {
+		select {
+		case number, isOpen := <-in:
+			{
+				if !isOpen {
+					return
+				}
+
+				out <- number
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}
 }
 
 func main() {
@@ -27,6 +54,8 @@ func main() {
 
 	// 3. Создание контекста
 	// ...
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
 	// для проверки будем считать количество и сумму отправленных чисел
 	var inputSum int64   // сумма сгенерированных чисел
@@ -41,9 +70,11 @@ func main() {
 	const NumOut = 5 // количество обрабатывающих горутин и каналов
 	// outs — слайс каналов, куда будут записываться числа из chIn
 	outs := make([]chan int64, NumOut)
+
 	for i := 0; i < NumOut; i++ {
 		// создаём каналы и для каждого из них вызываем горутину Worker
 		outs[i] = make(chan int64)
+
 		go Worker(chIn, outs[i])
 	}
 
@@ -53,9 +84,30 @@ func main() {
 	chOut := make(chan int64, NumOut)
 
 	var wg sync.WaitGroup
+	wg.Add(NumOut)
 
 	// 4. Собираем числа из каналов outs
 	// ...
+	for index, chanel := range outs {
+		go func(in chan int64, i int) {
+			defer wg.Done()
+
+			for {
+				select {
+				case value, isOpen := <-in:
+					{
+						if !isOpen {
+							return
+						}
+
+						amounts[i]++
+
+						chOut <- value
+					}
+				}
+			}
+		}(chanel, index)
+	}
 
 	go func() {
 		// ждём завершения работы всех горутин для outs
@@ -69,6 +121,11 @@ func main() {
 
 	// 5. Читаем числа из результирующего канала
 	// ...
+
+	for number := range chOut {
+		count++
+		sum += number
+	}
 
 	fmt.Println("Количество чисел", inputCount, count)
 	fmt.Println("Сумма чисел", inputSum, sum)
