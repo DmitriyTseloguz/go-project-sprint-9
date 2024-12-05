@@ -21,13 +21,13 @@ func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 	for {
 		select {
 		case ch <- number:
+			{
+				fn(number)
+				number++
+			}
 		case <-ctx.Done():
 			return
 		}
-
-		fn(number)
-
-		number++
 	}
 }
 
@@ -35,18 +35,9 @@ func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 func Worker(in <-chan int64, out chan<- int64) {
 	defer close(out)
 
-	for {
-		select {
-		case number, isOpen := <-in:
-			{
-				if !isOpen {
-					return
-				}
-
-				out <- number
-				time.Sleep(time.Millisecond)
-			}
-		}
+	for number := range in {
+		out <- number
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -59,13 +50,13 @@ func main() {
 	defer cancel()
 
 	// для проверки будем считать количество и сумму отправленных чисел
-	var generatedNumberSum atomic.Int64   // сумма сгенерированных чисел
-	var generatedNumberCount atomic.Int64 // количество сгенерированных чисел
+	var inputSum int64   // сумма сгенерированных чисел
+	var inputCount int64 // количество сгенерированных чисел
 
 	// генерируем числа, считая параллельно их количество и сумму
 	go Generator(ctx, chIn, func(i int64) {
-		generatedNumberSum.Add(i)
-		generatedNumberCount.Add(1)
+		atomic.AddInt64(&inputSum, i)
+		atomic.AddInt64(&inputCount, 1)
 	})
 
 	const NumOut = 5 // количество обрабатывающих горутин и каналов
@@ -93,19 +84,10 @@ func main() {
 		go func(in chan int64, i int) {
 			defer wg.Done()
 
-			for {
-				select {
-				case value, isOpen := <-in:
-					{
-						if !isOpen {
-							return
-						}
+			for value := range in {
+				amounts[i]++
 
-						amounts[i]++
-
-						chOut <- value
-					}
-				}
+				chOut <- value
 			}
 		}(chanel, index)
 	}
@@ -127,9 +109,6 @@ func main() {
 		count++
 		sum += number
 	}
-
-	inputSum := generatedNumberSum.Load()
-	inputCount := generatedNumberCount.Load()
 
 	fmt.Println("Количество чисел", inputCount, count)
 	fmt.Println("Сумма чисел", inputSum, sum)
